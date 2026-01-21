@@ -1,6 +1,4 @@
-
-
-verfrom lifo import Lifo
+from lifo import Lifo
 import time
 
 # Načítanie labyrintu zo súboru
@@ -35,7 +33,7 @@ def getMoznosti(poz):
     # Kontrola hraníc poľa pre robustnosť (aj keď sa predpokladá korektný pohyb)
     if poz[1] < 0 or poz[1] >= len(labirynt) or poz[0] < 0 or poz[0] >= len(labirynt[0]):
         return []
-        
+
     hodnota = labirynt[poz[1]][poz[0]]
     if hodnota & 1:
         moznosti.append("SEVER")
@@ -178,4 +176,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

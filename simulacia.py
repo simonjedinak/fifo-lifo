@@ -1,236 +1,222 @@
-from fifo import Fifo
 import random
-import time
+from fifo import Fifo
 
-'''
-Zadanie:
-• Simultánie 8 hodinovej otváracej doby.
-• 5 opakovaní simulácie -> výstup do tabuľky.
-• Zrýchlenie času / 100.
-• Pravidlá časov:
-    P.Č. = 11
-    Príchod Ti = Ti-1 + 5 + random(25 + P.Č.) [sekúnd]
-    Nakupovanie Tn = 1 + random(10 + P.Č.) [minút]
-    Spracovanie Tp = 0.3 + Tn / 20 [minút]
-'''
+PORADOVE_CISLO = 11
+OTVARACIA_DOBA_SEKUND = 8 * 60 * 60
+ZRYCHLENIE = 100
+KAPACITA_FIFO = 10000
 
-P_CISLO = 11
 
-def format_time(seconds):
-    """Pomocná funkcia na formátovanie času (HH:MM:SS) od začiatku (0s = 08:00:00)."""
-    # Predpokladáme, že 0s je otvorenie obchodu
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = int(seconds % 60)
-    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+class Kupujuci:
+    # Trieda reprezentujúca kupujúceho.
 
-class Customer:
-    def __init__(self, id, arrival_time):
-        self.id = id
-        self.arrival_time = arrival_time
-        # Doba nakupovania v sekundách
-        # Tn = 1 + random(10 + P.Č.) minút
-        self.shopping_duration_min = 1 + random.randint(0, 10 + P_CISLO)
-        self.shopping_duration_sec = self.shopping_duration_min * 60
-        
-        # Čas kedy sa postaví do radu
-        self.queue_entry_time = self.arrival_time + self.shopping_duration_sec
-        
-        # Doba spracovania v sekundách
-        # Tp = 0.3 + Tn / 20 minút
-        self.processing_duration_min = 0.3 + (self.shopping_duration_min / 20.0)
-        self.processing_duration_sec = self.processing_duration_min * 60
-        
-        self.start_service_time = None
-        self.end_service_time = None
+    def __init__(self, poradove_cislo, cas_prichodu, cas_nakupovania, cas_spracovania):
+        self.poradove_cislo = poradove_cislo
+        self.cas_prichodu = cas_prichodu
+        self.cas_nakupovania = cas_nakupovania
+        self.cas_spracovania = cas_spracovania
+        self.cas_koniec_nakupovania = cas_prichodu + self.cas_nakupovania
+        self.cas_vstupu_do_radu = None
 
     def __str__(self):
-        return (f"Zákazník {self.id}: Príchod={format_time(self.arrival_time)}, "
-                f"Nakupovanie={self.shopping_duration_min} min, "
-                f"Spracovanie={self.processing_duration_min:.2f} min")
-
-class StoreSimulation:
-    def __init__(self, simulation_id, run_duration_hours=8, time_scale=100.0):
-        self.simulation_id = simulation_id
-        self.run_duration_sec = run_duration_hours * 3600
-        self.time_scale = time_scale
-        
-        # FIFO buffer - kapacita dostatočne veľká aby sa nezaplnila počas simulácie bežne
-        self.queue = Fifo(1000)
-        
-        self.customers = []
-        self.current_time = 0.0
-        
-        # Štatistiky
-        self.total_customers = 0
-        self.max_wait_time = 0.0
-        self.max_queue_length = 0
-        self.total_idle_time = 0.0
-        
-        # Stav pokladne
-        self.cashier_busy_until = 0.0
-        self.last_idle_start = 0.0
-
-    def run(self, verbose=True):
-        if verbose:
-            print(f"\n=== SPUSTENIE SIMULÁCIE č. {self.simulation_id} ===")
-        
-        # Generovanie zákazníkov vopred alebo za behu? 
-        # Keďže je to event-based simulation (diskrétna simulácia), budeme skákať po eventoch alebo po sekundách?
-        # Zadanie hovorí "V správnom čase zaraďte kupujúceho...".
-        # Najjednoduchšie je generovať príchody postupne.
-        
-        next_arrival_time = 0.0 # Prvý zákazník príde v čase 0 + 5 + ... alebo hneď? 
-        # Zadanie: Ti = Ti-1 + 5 + random(...) -> T0 predošlý = 0.
-        # Prvý Ti = 0 + 5 + random(...)
-        next_arrival_time = 5 + random.randint(0, 25 + P_CISLO)
-        
-        customer_counter = 1
-        
-        # Zoradené udalosti: (čas, typ, objekt)
-        # Typy: 'ARRIVAL' (príchod do obchodu - len info), 'QUEUE_ENTRY' (príchod k pokladni), 'CHECKOUT_DONE' (odchod od pokladne)
-        # Avšak CHECKOUT_DONE závisí od toho kedy sa dostane na rad.
-        
-        # Budeme simulovať po 1 virtuálnej sekunde (rýchle a jednoduché implementovať)
-        # alebo event-based. Event based je presnejší pre desatinné časy.
-        
-        # Zoznam aktívnych zákazníkov v obchode (nakupujúcich)
-        shoppers = [] 
-        
-        # Zoznam ukončených zákazníkov
-        finished_customers = []
-
-        is_idle = True
-        self.last_idle_start = 0.0
-
-        step = 1.0 # krok simulácie v sekundách
-        while self.current_time < self.run_duration_sec or self.queue.getLength() > 0 or shoppers:
-            # 1. Kontrola príchodu nového zákazníka do obchodu
-            # Generujeme ich len ak ešte neuplynul otvárací čas
-            if self.current_time < self.run_duration_sec and self.current_time >= next_arrival_time:
-                c = Customer(customer_counter, next_arrival_time)
-                shoppers.append(c)
-                self.customers.append(c)
-                if verbose:
-                    # Toto nie je vyžadované vo výpise "Pri každej zmene vo FIFO", ale užitočné pre debug
-                    # print(f"[{format_time(self.current_time)}] Príchod do obchodu: {c}")
-                    pass
-                    
-                customer_counter += 1
-                # Plánovanie ďalšieho príchodu
-                next_arrival_time += 5 + random.randint(0, 25 + P_CISLO)
-
-            # 2. Kontrola či niekto dopodnakupoval a ide do radu
-            # Shoppers zoznam prejdeme a presunieme do queue
-            items_to_queue = []
-            for s in shoppers:
-                if self.current_time >= s.queue_entry_time:
-                    items_to_queue.append(s)
-            
-            for s in items_to_queue:
-                shoppers.remove(s)
-                try:
-                    self.queue.append(s)
-                    if verbose:
-                        print(f"[{format_time(self.current_time)}] DO RADU: Zákazník {s.id} (Príchod: {format_time(s.arrival_time)}, Nákup: {s.shopping_duration_min}m, Sprac: {s.processing_duration_min:.2f}m)")
-                        print(f"    -> Dĺžka radu: {self.queue.getLength()}, Idle pokladne: {format_time(self.total_idle_time)}")
-                except IndexError:
-                    print("!!! CHYBA: Plný rad, zákazník odchádza !!!")
-
-                # Update max queue length
-                if self.queue.getLength() > self.max_queue_length:
-                    self.max_queue_length = self.queue.getLength()
-
-            # 3. Obsluha pokladne
-            if self.current_time >= self.cashier_busy_until:
-                # Pokladňa je voľná
-                if not is_idle:
-                     # Práve sa uvoľnila
-                     is_idle = True
-                     self.last_idle_start = self.current_time
-
-                if self.queue.getLength() > 0:
-                    # Berieme zákazníka
-                    customer = self.queue.get()
-                    
-                    # Koniec idle time
-                    if is_idle:
-                        idle_duration = self.current_time - self.last_idle_start
-                        self.total_idle_time += idle_duration
-                        is_idle = False
-                    
-                    customer.start_service_time = self.current_time
-                    customer.end_service_time = self.current_time + customer.processing_duration_sec
-                    self.cashier_busy_until = customer.end_service_time
-                    
-                    # Výpočet čakania
-                    wait_time = customer.start_service_time - customer.queue_entry_time
-                    if wait_time > self.max_wait_time:
-                        self.max_wait_time = wait_time
-                        
-                    finished_customers.append(customer)
-
-            # 4. Kontrola či niekto práve zaplatil (len pre výpis)
-            # Ak sa cashier_busy_until == current_time (približne), tak práve skončil
-            if not is_idle and abs(self.current_time - self.cashier_busy_until) < step/2:
-                 # Nájdeme posledného finished (pozor na race condition v logike, ale tu sme single thread)
-                 if finished_customers:
-                     last = finished_customers[-1]
-                     if abs(last.end_service_time - self.current_time) < step/2:
-                         wait = last.start_service_time - last.queue_entry_time
-                         if verbose:
-                             print(f"[{format_time(self.current_time)}] ODCHOD: Zákazník {last.id}, čakal v rade: {format_time(wait)}")
-                             print(f"    -> Dĺžka radu: {self.queue.getLength()}, Idle pokladne: {format_time(self.total_idle_time)}")
+        return (f"Kupujúci #{self.poradove_cislo}: príchod={self.cas_prichodu}s, "
+                f"nakupovanie={self.cas_nakupovania:.1f}s, "
+                f"spracovanie={self.cas_spracovania:.2f}s")
 
 
-            # Posun času
-            # Ak bežíme zrýchlene, sleepujeme
-            # Zadanie: "Simuláciu spúšťajte zrýchlene (každý časový údaj /100)"
-            # To znamená, že 1 sekunda v simulácii trvá 0.01 sekundy reálne.
-            # Ale keďže chceme zbehnúť 8 hodín (28800 sekúnd), trvalo by to 288 sekúnd (cca 5 minút).
-            # To je akceptovateľné pre "view".
-            
-            self.current_time += step
-            # if verbose: time.sleep(step / self.time_scale) 
-            # Pre účely generovania outputu pre užívateľa teraz sleep vypnem, aby sme to mali hneď.
+def format_cas(sekundy):
+    # Formátuje sekundy na HH:MM:SS.
+    h = int(sekundy // 3600)
+    m = int((sekundy % 3600) // 60)
+    s = int(sekundy % 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
 
-            # Stop condition ak sme za otváracou dobou a všetci sú vybavení
-            if self.current_time >= self.run_duration_sec and self.queue.getLength() == 0 and not shoppers and is_idle:
+
+def generuj_kupujucich():
+    # Generuje kupujúcich počas celej otváracej doby.
+    kupujuci_list = []
+    cas_prichodu = 0
+    i = 1
+
+    while cas_prichodu < OTVARACIA_DOBA_SEKUND:
+        # Ti = Ti-1 + 5 + random(25+P.Č.) sekúnd
+        if i > 1:
+            cas_prichodu = kupujuci_list[-1].cas_prichodu + 5 + random.randint(0, 25 + PORADOVE_CISLO)
+
+        if cas_prichodu >= OTVARACIA_DOBA_SEKUND:
+            break
+
+        # Tn = 1 + random(10+P.Č.) minút
+        cas_nakupovania = 1 + random.randint(0, 10 + PORADOVE_CISLO) * 60
+
+        # Tp = 0.3 + Tn/20 minút
+        cas_spracovania = 0.3 + cas_nakupovania / 20 * 60
+
+        kupujuci = Kupujuci(i, cas_prichodu, cas_nakupovania, cas_spracovania)
+        kupujuci_list.append(kupujuci)
+        i += 1
+
+    # Zoradenie podľa času konca nakupovania
+    kupujuci_list.sort(key=lambda k: k.cas_koniec_nakupovania)
+
+    return kupujuci_list
+
+
+def spusti_simulaciu():
+    # Spustí simuláciu obchodu
+    print("=" * 80)
+    print(f"SIMULÁCIA RADU PRI POKLADNI")
+    print(f"Otváracia doba: 8 hodín ({OTVARACIA_DOBA_SEKUND}s), Zrýchlenie: {ZRYCHLENIE}x")
+    print("=" * 80)
+
+    # init
+    fifo = Fifo(KAPACITA_FIFO)
+    kupujuci_list = generuj_kupujucich()
+
+    print(f"Celkový počet kupujúcich: {len(kupujuci_list)}\n")
+
+    # Štatistiky
+    celkova_necinnost = 0.0
+    max_cakanie = 0.0
+    max_dlzka_radu = 0
+
+    # Stav simulácie
+    aktualny_cas = 0.0
+    cas_konca_obsluhy = 0.0
+
+    # Zoznamy na spracovanie
+    nakupujuci = kupujuci_list.copy()  # zakaznici ktory este nakupuju
+    nakupujuci.sort(key=lambda k: k.cas_koniec_nakupovania)
+
+    while aktualny_cas < OTVARACIA_DOBA_SEKUND or fifo.length() > 0:
+        # Nájdi najbližšiu udalosť
+        udalosti = []
+
+        # Kupujúci dokončí nakupovanie
+        if nakupujuci:
+            udalosti.append(('nakup_koniec', nakupujuci[0].cas_koniec_nakupovania))
+
+        # Pokladňa dokončí obsluhu
+        if cas_konca_obsluhy > aktualny_cas:
+            udalosti.append(('obsluha_koniec', cas_konca_obsluhy))
+        elif fifo.length() > 0:
+            # Môžeme hneď obslúžiť ďalšieho
+            udalosti.append(('obsluha_koniec', aktualny_cas))
+
+        if not udalosti:
+            if aktualny_cas >= OTVARACIA_DOBA_SEKUND:
                 break
-        
-        # Prirátame posledný idle time ak skončilo skôr
-        if is_idle and self.current_time < self.run_duration_sec:
-             self.total_idle_time += (self.run_duration_sec - self.current_time)
-        elif is_idle:
-             # ak sme skončili po záverečnej, idle time rátame len do poslednej akcie alebo do konca otvaracej doby?
-             # Rátame idle time počas otváracej doby.
-             pass
+            # Posunieme čas
+            aktualny_cas += 1
+            continue
 
-        self.total_customers = len(finished_customers)
-        return {
-            "Run": self.simulation_id,
-            "Total Customers": self.total_customers,
-            "Max Wait (s)": self.max_wait_time,
-            "Max Queue": self.max_queue_length,
-            "Total Idle (s)": self.total_idle_time
-        }
+        # Vyber najbližšiu udalosť
+        udalosti.sort(key=lambda x: x[1])
+        typ_udalosti, cas_udalosti = udalosti[0]
 
-def main():
-    results = []
-    print("=== ZAČIATOK SÉRIE 5 SIMULÁCIÍ ===\n")
-    
-    for i in range(1, 6):
-        sim = StoreSimulation(i)
-        res = sim.run(verbose=True) # Verbose pre prvú, alebo všetky? "Simuláciu spúšťajte 5x ... po prvom zaplnení obrazovky..."
-        # Dám verbose pre všetky, user si scrolne.
-        results.append(res)
-        print("-" * 50)
+        aktualny_cas = cas_udalosti
 
-    print("\n=== VÝSLEDNÁ TABUĽKA ===")
-    print(f"{'Beh':<5} | {'Zákazníci':<10} | {'Max Čakanie':<15} | {'Max Rad':<10} | {'Idle Pokladne':<15}")
-    print("-" * 65)
-    for r in results:
-        print(f"{r['Run']:<5} | {r['Total Customers']:<10} | {format_time(r['Max Wait (s)']):<15} | {r['Max Queue']:<10} | {format_time(r['Total Idle (s)']):<15}")
+        if typ_udalosti == 'nakup_koniec':
+            # Kupujúci dokončil nakupovanie - postaví sa do radu
+            kupujuci = nakupujuci.pop(0)
+            kupujuci.cas_vstupu_do_radu = aktualny_cas
+
+            try:
+                fifo.put(kupujuci)
+            except IndexError:
+                print(f"[{format_cas(aktualny_cas)}] CHYBA: Rad je plný, kupujúci #{kupujuci.poradove_cislo} odchádza!")
+                continue
+
+            # Aktualizuj max dĺžku radu
+            if fifo.length() > max_dlzka_radu:
+                max_dlzka_radu = fifo.length()
+                print(f"[{format_cas(aktualny_cas)}] >>> NOVÁ MAX. DĹŽKA RADU: {max_dlzka_radu} <<<")
+
+            print(f"[{format_cas(aktualny_cas)}] PRÍCHOD DO RADU | "
+                  f"Dĺžka radu: {fifo.length()} | Nečinnosť: {celkova_necinnost:.2f}s")
+            print(f"    -> {kupujuci}")
+
+            # Ak pokladňa čaká, spočítaj nečinnosť
+            if cas_konca_obsluhy <= aktualny_cas and fifo.length() == 1:
+                necinnost = aktualny_cas - max(cas_konca_obsluhy, 0)
+                if necinnost > 0 and cas_konca_obsluhy > 0:
+                    celkova_necinnost += necinnost
+
+        elif typ_udalosti == 'obsluha_koniec':
+            if fifo.length() > 0:
+                kupujuci = fifo.get()
+                cas_cakania = aktualny_cas - kupujuci.cas_vstupu_do_radu
+
+                # Aktualizuj max čakanie
+                if cas_cakania > max_cakanie:
+                    max_cakanie = cas_cakania
+                    print(f"[{format_cas(aktualny_cas)}] >>> NOVÁ MAX. DOBA ČAKANIA: {max_cakanie:.2f}s <<<")
+
+                print(f"[{format_cas(aktualny_cas)}] ODCHOD Z RADU | "
+                      f"Dĺžka radu: {fifo.length()} | Nečinnosť: {celkova_necinnost:.2f}s")
+                print(f"    -> Kupujúci #{kupujuci.poradove_cislo} zaplatil, čakal v rade: {cas_cakania:.2f}s")
+
+                cas_konca_obsluhy = aktualny_cas + kupujuci.cas_spracovania
+            else:
+                # Pokladňa je voľná, ale nikto nečaká
+                if aktualny_cas >= OTVARACIA_DOBA_SEKUND:
+                    break
+
+    # Záverečné štatistiky
+    print("\n" + "=" * 80)
+    print("KONIEC SIMULÁCIE - SÚHRN")
+    print("=" * 80)
+    print(f"Celkový počet kupujúcich: {len(kupujuci_list)}")
+    print(f"Maximálna doba čakania v rade: {max_cakanie / 60:.2f} min = {max_cakanie:.2f} sekúnd")
+    print(f"Maximálna dĺžka radu: {max_dlzka_radu}")
+    print(f"Celková doba nečinnosti pokladne: {celkova_necinnost / 60:.2f} min = {celkova_necinnost:.2f} sekúnd")
+    print("=" * 80)
+
+    return {
+        'pocet_ludi': len(kupujuci_list),
+        'max_cakanie': max_cakanie,
+        'max_dlzka_radu': max_dlzka_radu,
+        'necinnost': celkova_necinnost
+    }
+
+
+def spusti_5_simulacii():
+    # Spustí 5 simulácií a zobrazí výsledky v tabuľke.
+    vysledky = []
+
+    for i in range(5):
+        print(f"\n{'#' * 80}")
+        print(f"SIMULÁCIA č. {i + 1}")
+        print(f"{'#' * 80}\n")
+
+        vysledok = spusti_simulaciu()
+        vysledky.append(vysledok)
+
+        input("\nStlačte ENTER pre pokračovanie na ďalšiu simuláciu...")
+
+    # Výpis tabuľky
+    print("\n" + "=" * 100)
+    print("SÚHRNNÁ TABUĽKA VÝSLEDKOV (5 simulácií)")
+    print("=" * 100)
+    print(f"{'Simulácia':<12} | {'Počet ľudí':<12} | {'Max. čakanie (s)':<18} | "
+          f"{'Max. dĺžka radu':<16} | {'Nečinnosť (s)':<16}")
+    print("-" * 100)
+
+    for i, v in enumerate(vysledky, 1):
+        print(f"{i:<12} | {v['pocet_ludi']:<12} | {v['max_cakanie']:<18.2f} | "
+              f"{v['max_dlzka_radu']:<16} | {v['necinnost']:<16.2f}")
+
+    print("=" * 100)
+
 
 if __name__ == "__main__":
-    main()
+    print("Vyberte režim:")
+    print("1 - Jedna simulácia")
+    print("2 - 5 simulácií s tabuľkou")
+
+    volba = input("Vaša voľba (1/2): ").strip()
+
+    if volba == "2":
+        spusti_5_simulacii()
+    else:
+        spusti_simulaciu()
