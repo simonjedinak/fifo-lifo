@@ -1,9 +1,6 @@
-
-
-verfrom lifo import Lifo
+from lifo import Lifo
 import time
 
-# Načítanie labyrintu zo súboru
 with open("labyrint.txt", 'r') as file:
     labirynt = [list(map(int, line.strip().split(" "))) for line in file.readlines()]
 
@@ -30,12 +27,7 @@ OPACNE_SMERY = {
 
 
 def getMoznosti(poz):
-    """Vráti zoznam dostupných smerov z danej pozície."""
     moznosti = []
-    # Kontrola hraníc poľa pre robustnosť (aj keď sa predpokladá korektný pohyb)
-    if poz[1] < 0 or poz[1] >= len(labirynt) or poz[0] < 0 or poz[0] >= len(labirynt[0]):
-        return []
-        
     hodnota = labirynt[poz[1]][poz[0]]
     if hodnota & 1:
         moznosti.append("SEVER")
@@ -49,7 +41,6 @@ def getMoznosti(poz):
 
 
 def najdiStart():
-    """Nájde súradnice štartovacej miestnosti (bit 16)."""
     for y in range(len(labirynt)):
         for x in range(len(labirynt[y])):
             if labirynt[y][x] & 16:
@@ -58,14 +49,12 @@ def najdiStart():
 
 
 def pohyb(poz, smer):
-    """Vypočíta nové súradnice po pohybe."""
     x, y = poz
     _, dx, dy = SMERY[smer]
     return x + dx, y + dy
 
 
 def vypisMiestnost(poradie, poz, ma_kluc):
-    """Vypíše informácie o aktuálnej miestnosti."""
     hodnota = labirynt[poz[1]][poz[0]]
     moznosti = getMoznosti(poz)
 
@@ -83,9 +72,7 @@ def vypisMiestnost(poradie, poz, ma_kluc):
 
 def main():
     print("=== LABYRINT - Escape Room ===\n")
-    print_labirynt(labirynt)
 
-    # Inicializácia zásobníka
     velkost_zasobnika = len(labirynt) * len(labirynt[0])
     zasobnik = Lifo(velkost_zasobnika)  # zásobník pre históriu pohybov (smery)
 
@@ -115,11 +102,7 @@ def main():
                 continue
 
             # Ulož smer do zásobníka
-            try:
-                zasobnik.push(prikaz)
-            except IndexError:
-                print("CHYBA: Zásobník je plný, nemôžete ísť ďalej!")
-                continue
+            zasobnik.push(prikaz)
 
             # Pohyb
             poz = pohyb(poz, prikaz)
@@ -160,7 +143,7 @@ def main():
 
             vypisMiestnost(poradie, poz, ma_kluc)
 
-            # Skontroluj víťazstvo (teoreticky možné ak sa vrátim na štart s kľúčom, hoci zvyčajne sa ide späť po vlastných stopách)
+            # Skontroluj víťazstvo
             if ma_kluc and poz == start_poz:
                 elapsed = time.time() - start_time
                 print("\n*** GRATULUJEME! UNIKLI STE Z LABYRINTU! ***")
@@ -178,4 +161,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
