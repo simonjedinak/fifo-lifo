@@ -8,7 +8,6 @@ class Fifo:
         self.tail = 0
 
     def put(self, data):
-
         self.buffer[self.tail] = data
         self.tail = (self.tail + 1) % self._capacity
 
@@ -27,5 +26,4 @@ class Fifo:
         return self._capacity - (self.head - self.tail)
 
     def __str__(self):
-        """Vráti kompletnú štruktúru všetkých dát FIFO ako reťazec."""
         return f"FIFO(head={self.head}, tail={self.tail}, buffer={self.buffer})"

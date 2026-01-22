@@ -2,8 +2,7 @@ import random
 from fifo import Fifo
 
 PORADOVE_CISLO = 11
-OTVARACIA_DOBA_SEKUND = 8 * 60 * 60
-ZRYCHLENIE = 50
+OTVARACIA_DOBA_MINUT = 8 * 60  # 480 minút
 KAPACITA_FIFO = 1500
 
 
@@ -19,17 +18,28 @@ class Kupujuci:
         self.cas_vstupu_do_radu = None
 
     def __str__(self):
-        return (f"Kupujúci #{self.poradove_cislo}: príchod={self.cas_prichodu}s, "
-                f"nakupovanie={self.cas_nakupovania:.1f}s, "
-                f"spracovanie={self.cas_spracovania:.2f}s")
+        return (f"Kupujúci #{self.poradove_cislo}: príchod={self.cas_prichodu:.1f}min, "
+                f"nakupovanie={self.cas_nakupovania:.1f}min, "
+                f"spracovanie={self.cas_spracovania:.2f}min")
 
 
-def format_cas(sekundy):
-    # Formátuje sekundy na HH:MM:SS.
-    h = int(sekundy // 3600)
-    m = int((sekundy % 3600) // 60)
-    s = int(sekundy % 60)
+def format_cas(minuty):
+    # Formátuje minúty na HH:MM:SS.
+    sekundy_total = minuty * 60
+    h = int(sekundy_total // 3600)
+    m = int((sekundy_total % 3600) // 60)
+    s = int(sekundy_total % 60)
     return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def get_cas_koniec_nakupovania(kupujuci):
+    # Vráti čas konca nakupovania kupujúceho.
+    return kupujuci.cas_koniec_nakupovania
+
+
+def get_second_element(item):
+    # Vráti druhý prvok z tuple/listu.
+    return item[1]
 
 
 def generuj_kupujucich():
@@ -38,19 +48,18 @@ def generuj_kupujucich():
     cas_prichodu = 0
     i = 1
 
-    while cas_prichodu < OTVARACIA_DOBA_SEKUND:
-        # Ti = Ti-1 + 5 + random(25+P.Č.) sekúnd
+    while cas_prichodu < OTVARACIA_DOBA_MINUT:
+        # Ti = Ti-1 + (5 + random(25+P.Č.)) sekúnd
         if i > 1:
-            cas_prichodu = kupujuci_list[-1].cas_prichodu + 5 + random.randint(0, 25 + PORADOVE_CISLO)
+            interval_sekund = 5 + random.randint(0, 25 + PORADOVE_CISLO)
+            cas_prichodu = kupujuci_list[-1].cas_prichodu + interval_sekund / 60
 
-        if cas_prichodu >= OTVARACIA_DOBA_SEKUND:
+        if cas_prichodu >= OTVARACIA_DOBA_MINUT:
             break
 
-        cas_nakupovania_min = 1 + random.randint(0, 10 + PORADOVE_CISLO)
-        cas_nakupovania = cas_nakupovania_min * 60  # preveď na sekundy
+        cas_nakupovania = 1 + random.randint(0, 10 + PORADOVE_CISLO)
 
-        cas_spracovania_min = 0.3 + cas_nakupovania_min / 20
-        cas_spracovania = cas_spracovania_min * 60  # preveď na sekundy
+        cas_spracovania = 0.3 + cas_nakupovania / 20
 
         kupujuci = Kupujuci(i, cas_prichodu, cas_nakupovania, cas_spracovania)
         kupujuci_list.append(kupujuci)
@@ -63,7 +72,7 @@ def spusti_simulaciu():
     # Spustí simuláciu obchodu
     print("=" * 80)
     print(f"SIMULÁCIA RADU PRI POKLADNI")
-    print(f"Otváracia doba: 8 hodín ({OTVARACIA_DOBA_SEKUND}s), Zrýchlenie: {ZRYCHLENIE}x")
+    print(f"Otváracia doba: 8 hodín ({OTVARACIA_DOBA_MINUT} min)")
     print("=" * 80)
 
     # init
@@ -84,7 +93,7 @@ def spusti_simulaciu():
 
     # Zoznamy na spracovanie
     nakupujuci = kupujuci_list.copy()
-    nakupujuci.sort(key=lambda k: k.cas_koniec_nakupovania)
+    nakupujuci.sort(key=get_cas_koniec_nakupovania)
 
     while nakupujuci or fifo.length() > 0 or cas_konca_obsluhy > aktualny_cas:
         # Nájdi najbližšiu udalosť
@@ -105,7 +114,7 @@ def spusti_simulaciu():
             break
 
         # Vyber najbližšiu udalosť
-        udalosti.sort(key=lambda x: x[1])
+        udalosti.sort(key=get_second_element)
         typ_udalosti, cas_udalosti = udalosti[0]
 
         aktualny_cas = cas_udalosti
@@ -125,7 +134,7 @@ def spusti_simulaciu():
                 suma_cakania += cas_cakania
 
                 print(f"[{format_cas(aktualny_cas)}] PRÍCHOD A OKAMŽITÁ OBSLUHA | "
-                      f"Nečinnosť pokladne: {celkova_necinnost:.2f}s")
+                      f"Nečinnosť pokladne: {celkova_necinnost:.2f} min")
                 print(f"    -> {kupujuci}")
 
                 cas_konca_obsluhy = aktualny_cas + kupujuci.cas_spracovania
@@ -158,12 +167,12 @@ def spusti_simulaciu():
                 if cas_cakania > max_cakanie:
                     max_cakanie = cas_cakania
                     print(
-                        f"[{format_cas(aktualny_cas)}] >>> NOVÁ MAX. DOBA ČAKANIA: {cas_cakania:.2f}s ({cas_cakania / 60:.2f} min) <<<")
+                        f"[{format_cas(aktualny_cas)}] >>> NOVÁ MAX. DOBA ČAKANIA: {cas_cakania:.2f} min <<<")
 
                 print(f"[{format_cas(aktualny_cas)}] OBSLUHA | "
                       f"Dĺžka radu: {fifo.length()}")
                 print(
-                    f"    -> Kupujúci #{kupujuci.poradove_cislo} začal platiť, čakal v rade: {cas_cakania:.2f}s ({cas_cakania / 60:.2f} min)")
+                    f"    -> Kupujúci #{kupujuci.poradove_cislo} začal platiť, čakal v rade: {cas_cakania:.2f} min")
 
                 cas_konca_obsluhy = aktualny_cas + kupujuci.cas_spracovania
 
@@ -171,9 +180,9 @@ def spusti_simulaciu():
     print("KONIEC SIMULÁCIE - SÚHRN")
     print("=" * 80)
     print(f"Celkový počet kupujúcich: {len(kupujuci_list)}")
-    print(f"Maximálna doba čakania v rade: {max_cakanie / 60:.2f} min = {max_cakanie:.2f} sekúnd")
+    print(f"Maximálna doba čakania v rade: {max_cakanie:.2f} min | {max_cakanie * 60:.0f} s")
     print(f"Maximálna dĺžka radu: {max_dlzka_radu}")
-    print(f"Celková doba nečinnosti pokladne: {celkova_necinnost / 60:.2f} min = {celkova_necinnost:.2f} sekúnd")
+    print(f"Celková doba nečinnosti pokladne: {celkova_necinnost:.2f} min | {celkova_necinnost * 60:.0f} s")
     print("=" * 80)
 
     return {
@@ -202,8 +211,8 @@ def spusti_5_simulacii():
     print("\n" + "=" * 100)
     print("SÚHRNNÁ TABUĽKA VÝSLEDKOV (5 simulácií)")
     print("=" * 100)
-    print(f"{'Simulácia':<12} | {'Počet ľudí':<12} | {'Max. čakanie (s)':<18} | "
-          f"{'Max. dĺžka radu':<16} | {'Nečinnosť (s)':<16}")
+    print(f"{'Simulácia':<12} | {'Počet ľudí':<12} | {'Max. čakanie (min)':<18} | "
+          f"{'Max. dĺžka radu':<16} | {'Nečinnosť (min)':<16}")
     print("-" * 100)
 
     for i, v in enumerate(vysledky, 1):
