@@ -3,8 +3,8 @@ from fifo import Fifo
 
 PORADOVE_CISLO = 11
 OTVARACIA_DOBA_SEKUND = 8 * 60 * 60
-ZRYCHLENIE = 100
-KAPACITA_FIFO = 10000
+ZRYCHLENIE = 50
+KAPACITA_FIFO = 1500
 
 
 class Kupujuci:
@@ -46,18 +46,15 @@ def generuj_kupujucich():
         if cas_prichodu >= OTVARACIA_DOBA_SEKUND:
             break
 
-        # Tn = 1 + random(10+P.Č.) minút
-        cas_nakupovania = 1 + random.randint(0, 10 + PORADOVE_CISLO) * 60
+        cas_nakupovania_min = 1 + random.randint(0, 10 + PORADOVE_CISLO)
+        cas_nakupovania = cas_nakupovania_min * 60  # preveď na sekundy
 
-        # Tp = 0.3 + Tn/20 minút
-        cas_spracovania = 0.3 + cas_nakupovania / 20 * 60
+        cas_spracovania_min = 0.3 + cas_nakupovania_min / 20
+        cas_spracovania = cas_spracovania_min * 60  # preveď na sekundy
 
         kupujuci = Kupujuci(i, cas_prichodu, cas_nakupovania, cas_spracovania)
         kupujuci_list.append(kupujuci)
         i += 1
-
-    # Zoradenie podľa času konca nakupovania
-    kupujuci_list.sort(key=lambda k: k.cas_koniec_nakupovania)
 
     return kupujuci_list
 
@@ -79,16 +76,17 @@ def spusti_simulaciu():
     celkova_necinnost = 0.0
     max_cakanie = 0.0
     max_dlzka_radu = 0
+    suma_cakania = 0.0
 
     # Stav simulácie
     aktualny_cas = 0.0
     cas_konca_obsluhy = 0.0
 
     # Zoznamy na spracovanie
-    nakupujuci = kupujuci_list.copy()  # zakaznici ktory este nakupuju
+    nakupujuci = kupujuci_list.copy()
     nakupujuci.sort(key=lambda k: k.cas_koniec_nakupovania)
 
-    while aktualny_cas < OTVARACIA_DOBA_SEKUND or fifo.length() > 0:
+    while nakupujuci or fifo.length() > 0 or cas_konca_obsluhy > aktualny_cas:
         # Nájdi najbližšiu udalosť
         udalosti = []
 
@@ -100,15 +98,11 @@ def spusti_simulaciu():
         if cas_konca_obsluhy > aktualny_cas:
             udalosti.append(('obsluha_koniec', cas_konca_obsluhy))
         elif fifo.length() > 0:
-            # Môžeme hneď obslúžiť ďalšieho
-            udalosti.append(('obsluha_koniec', aktualny_cas))
+            # Pokladňa je voľná a niekto čaká - začni hneď obsluhovať
+            udalosti.append(('zacni_obsluhu', aktualny_cas))
 
         if not udalosti:
-            if aktualny_cas >= OTVARACIA_DOBA_SEKUND:
-                break
-            # Posunieme čas
-            aktualny_cas += 1
-            continue
+            break
 
         # Vyber najbližšiu udalosť
         udalosti.sort(key=lambda x: x[1])
@@ -117,52 +111,62 @@ def spusti_simulaciu():
         aktualny_cas = cas_udalosti
 
         if typ_udalosti == 'nakup_koniec':
-            # Kupujúci dokončil nakupovanie - postaví sa do radu
             kupujuci = nakupujuci.pop(0)
             kupujuci.cas_vstupu_do_radu = aktualny_cas
 
-            try:
-                fifo.put(kupujuci)
-            except IndexError:
-                print(f"[{format_cas(aktualny_cas)}] CHYBA: Rad je plný, kupujúci #{kupujuci.poradove_cislo} odchádza!")
-                continue
-
-            # Aktualizuj max dĺžku radu
-            if fifo.length() > max_dlzka_radu:
-                max_dlzka_radu = fifo.length()
-                print(f"[{format_cas(aktualny_cas)}] >>> NOVÁ MAX. DĹŽKA RADU: {max_dlzka_radu} <<<")
-
-            print(f"[{format_cas(aktualny_cas)}] PRÍCHOD DO RADU | "
-                  f"Dĺžka radu: {fifo.length()} | Nečinnosť: {celkova_necinnost:.2f}s")
-            print(f"    -> {kupujuci}")
-
-            # Ak pokladňa čaká, spočítaj nečinnosť
-            if cas_konca_obsluhy <= aktualny_cas and fifo.length() == 1:
-                necinnost = aktualny_cas - max(cas_konca_obsluhy, 0)
-                if necinnost > 0 and cas_konca_obsluhy > 0:
+            # Ak je pokladňa voľná a fronta prázdna, zákazník ide rovno k pokladni
+            if fifo.length() == 0 and cas_konca_obsluhy <= aktualny_cas:
+                # Počítaj nečinnosť pokladne (ak už niekto bol obslúžený)
+                if cas_konca_obsluhy > 0:
+                    necinnost = aktualny_cas - cas_konca_obsluhy
                     celkova_necinnost += necinnost
 
-        elif typ_udalosti == 'obsluha_koniec':
+                cas_cakania = 0.0  # nečakal, ide rovno
+                suma_cakania += cas_cakania
+
+                print(f"[{format_cas(aktualny_cas)}] PRÍCHOD A OKAMŽITÁ OBSLUHA | "
+                      f"Nečinnosť pokladne: {celkova_necinnost:.2f}s")
+                print(f"    -> {kupujuci}")
+
+                cas_konca_obsluhy = aktualny_cas + kupujuci.cas_spracovania
+            else:
+                # Musí čakať v rade
+                try:
+                    fifo.put(kupujuci)
+                except IndexError:
+                    print(
+                        f"[{format_cas(aktualny_cas)}] CHYBA: Rad je plný, kupujúci #{kupujuci.poradove_cislo} odchádza!")
+                    continue
+
+                # Aktualizuj max dĺžku radu
+                if fifo.length() > max_dlzka_radu:
+                    max_dlzka_radu = fifo.length()
+                    print(f"[{format_cas(aktualny_cas)}] >>> NOVÁ MAX. DĹŽKA RADU: {max_dlzka_radu} <<<")
+
+                print(f"[{format_cas(aktualny_cas)}] PRÍCHOD DO RADU | "
+                      f"Dĺžka radu: {fifo.length()}")
+                print(f"    -> {kupujuci}")
+
+        elif typ_udalosti == 'obsluha_koniec' or typ_udalosti == 'zacni_obsluhu':
+            # Pokladňa dokončila obsluhu alebo je voľná, vezmi ďalšieho z radu
             if fifo.length() > 0:
                 kupujuci = fifo.get()
                 cas_cakania = aktualny_cas - kupujuci.cas_vstupu_do_radu
+                suma_cakania += cas_cakania
 
                 # Aktualizuj max čakanie
                 if cas_cakania > max_cakanie:
                     max_cakanie = cas_cakania
-                    print(f"[{format_cas(aktualny_cas)}] >>> NOVÁ MAX. DOBA ČAKANIA: {max_cakanie:.2f}s <<<")
+                    print(
+                        f"[{format_cas(aktualny_cas)}] >>> NOVÁ MAX. DOBA ČAKANIA: {cas_cakania:.2f}s ({cas_cakania / 60:.2f} min) <<<")
 
-                print(f"[{format_cas(aktualny_cas)}] ODCHOD Z RADU | "
-                      f"Dĺžka radu: {fifo.length()} | Nečinnosť: {celkova_necinnost:.2f}s")
-                print(f"    -> Kupujúci #{kupujuci.poradove_cislo} zaplatil, čakal v rade: {cas_cakania:.2f}s")
+                print(f"[{format_cas(aktualny_cas)}] OBSLUHA | "
+                      f"Dĺžka radu: {fifo.length()}")
+                print(
+                    f"    -> Kupujúci #{kupujuci.poradove_cislo} začal platiť, čakal v rade: {cas_cakania:.2f}s ({cas_cakania / 60:.2f} min)")
 
                 cas_konca_obsluhy = aktualny_cas + kupujuci.cas_spracovania
-            else:
-                # Pokladňa je voľná, ale nikto nečaká
-                if aktualny_cas >= OTVARACIA_DOBA_SEKUND:
-                    break
 
-    # Záverečné štatistiky
     print("\n" + "=" * 80)
     print("KONIEC SIMULÁCIE - SÚHRN")
     print("=" * 80)
